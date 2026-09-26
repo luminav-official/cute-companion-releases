@@ -18,6 +18,7 @@ const server = createServer(async (req, res) => {
     const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' };
     await stat(file);
     res.setHeader('Content-Type', types[path.extname(file)] || 'application/octet-stream');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self'");
     res.end(await readFile(file));
   } catch { res.writeHead(404).end(); }
 });
