@@ -3,6 +3,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import AxeBuilder from '@axe-core/playwright';
 
 const root = path.resolve('site');
 const suffix = process.env.GITHUB_RUN_ID || Date.now().toString();
@@ -56,6 +57,16 @@ try {
     await page.keyboard.press('Tab');
     check(`${name}: keyboard skip link`, await page.evaluate(()=>document.activeElement?.classList.contains('skip-link')));
     await page.keyboard.press('Enter');
+    const choices=page.locator('[data-state-choice]');
+    if(await choices.count()) {
+      for(const state of ['typing','petting','drag','success','error','wait','idle']) {
+        await page.locator(`[data-state-choice="${state}"]`).click();
+        check(`${name}: ${state} frame row`, await page.locator('#character-stage').getAttribute('data-state')===state);
+      }
+    }
+    const axe=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa']).analyze();
+    check(`${name}: WCAG AA automated audit`, axe.violations.length===0);
+    result[`${name}Accessibility`]=axe.violations.map(v=>({id:v.id,impact:v.impact,description:v.description,nodes:v.nodes.map(n=>({html:n.html,summary:n.failureSummary}))}));
     if (name==='mobile') {
       await page.locator('.menu-toggle').click();
       check('mobile: menu opens', await page.locator('.menu-toggle').getAttribute('aria-expanded')==='true');
@@ -71,6 +82,9 @@ try {
       const s=document.querySelector('#character-sprite');
       return !s || getComputedStyle(s).animationName==='none' || parseFloat(getComputedStyle(s).animationDuration)<=.01;
     }));
+    const still=await page.locator('#character-sprite').evaluate(n=>getComputedStyle(n).backgroundPosition);
+    await page.waitForTimeout(400);
+    check(`${name}: reduced motion stops atlas clock`, still===await page.locator('#character-sprite').evaluate(n=>getComputedStyle(n).backgroundPosition));
     await context.close();
   }
   // Public reference observation only. Never included in the product website.
@@ -82,11 +96,12 @@ try {
     const videoCount=await videos.count();
     result.reference={url:'https://comnyang.com/en',videoCount,scope:'public promotional demo, not installed app behavior'};
     for(const fragment of ['1-eye-follow','2-drag','3-type']) {
-      const video=reference.locator(`video[src*="${fragment}"]`).first();
-      if(!await video.count()) continue;
-      await video.scrollIntoViewIfNeeded();
-      await video.evaluate(async v=>{v.muted=true;v.load();await v.play().catch(()=>{});});
+      // These exact public MP4 URLs were read from the official page HTML.
+      await reference.goto(`https://comnyang.com/assets/video/${fragment}.mp4`, {waitUntil:'domcontentloaded'});
+      const video=reference.locator('video').first();
       await video.waitFor({state:'visible'});
+      await video.evaluate(async v=>{v.muted=true;await v.play().catch(()=>{});});
+      await reference.waitForFunction(()=>document.querySelector('video')?.readyState>=2);
       await reference.waitForTimeout(1200);
       await video.screenshot({path:`${prefix}-reference-${fragment}.png`});
     }

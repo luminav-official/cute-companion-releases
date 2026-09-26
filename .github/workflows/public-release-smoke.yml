@@ -1,0 +1,71 @@
+# Copy this workflow and scripts/ci/public-release-smoke.ps1 to
+# luminav-official/cute-companion-releases. The repository guard keeps this
+# template inert if it is temporarily present in the private source repository.
+name: Public release smoke gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Draft release tag, for example v1.1.0-rc.1'
+        required: true
+        type: string
+      version:
+        description: 'Version matching the draft asset name'
+        required: true
+        type: string
+      promote:
+        description: 'Publish the draft only after smoke and PNG capture pass'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    if: ${{ github.repository == 'luminav-official/cute-companion-releases' }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      PROMOTE: ${{ inputs.promote }}
+    steps:
+      - name: Checkout release-only workflow
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download draft assets through the GitHub API
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -cne "v$env:RELEASE_VERSION") { throw 'SMOKE_TAG_VERSION_MISMATCH' }
+          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          if (-not $release.draft) { throw 'SMOKE_RELEASE_NOT_DRAFT' }
+          $archiveName = "CuteCompanion-$env:RELEASE_VERSION-win-x64.zip"
+          $names = @($archiveName, "$archiveName.sha256")
+          New-Item -ItemType Directory -Force bundle | Out-Null
+          foreach ($name in $names) {
+            $asset = @($release.assets | Where-Object name -CEQ $name)
+            if ($asset.Count -ne 1) { throw "SMOKE_ASSET_NOT_UNIQUE_$name" }
+            Invoke-WebRequest -Uri $asset[0].url -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/octet-stream' } -OutFile (Join-Path $env:GITHUB_WORKSPACE "bundle/$name")
+          }
+
+      - name: Run isolated Windows smoke gate
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:GITHUB_WORKSPACE "bundle/CuteCompanion-$env:RELEASE_VERSION-win-x64.zip"
+          $checksum = "$archive.sha256"
+          pwsh -NoProfile -File scripts/ci/public-release-smoke.ps1 -ArchivePath $archive -ChecksumPath $checksum -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'smoke-output')
+
+      - name: Attach smoke result and PNG to the same draft release
+        shell: pwsh
+        run: gh release upload $env:RELEASE_TAG (Join-Path $env:GITHUB_WORKSPACE 'smoke-output/live-01.png') (Join-Path $env:GITHUB_WORKSPACE 'smoke-output/smoke-result.json') --repo $env:GITHUB_REPOSITORY --clobber
+
+      - name: Promote draft after smoke pass
+        if: ${{ inputs.promote == true }}
+        shell: pwsh
+        run: gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false

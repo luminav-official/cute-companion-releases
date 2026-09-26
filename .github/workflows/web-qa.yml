@@ -35,7 +35,7 @@ jobs:
           unzip -q website-preview.zip -d site
       - name: Install browser verification tools
         run: |
-          npm install --no-save playwright@1.63.0 agent-browser@0.38.1
+          npm install --no-save playwright@1.63.0 agent-browser@0.38.1 @axe-core/playwright@4.13.0
           npx playwright install --with-deps chromium
           npx agent-browser install --with-deps
       - name: Verify desktop, mobile, keyboard and reduced motion
