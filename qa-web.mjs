@@ -49,6 +49,7 @@ try {
       const sprite=document.querySelector('#character-sprite'), image=document.querySelector('#character-art');
       return Boolean(sprite && !sprite.hidden && getComputedStyle(sprite).backgroundImage!=='none' || image && !image.hidden && image.naturalWidth>0);
     }));
+    check(`${name}: character loading label is hidden`, await page.locator('#character-pending').isHidden());
     const manifest = JSON.parse(await readFile(path.join(root,'releases.json'),'utf8'));
     const download = page.locator('#download-button');
     check(`${name}: download truth`, await download.getAttribute('aria-disabled') === (manifest.current.status==='available' ? 'false' : 'true'));
@@ -64,6 +65,7 @@ try {
     await page.evaluate(()=>window.scrollTo(0,0));
     const screenshot=`${prefix}-${name}.png`;
     await page.screenshot({path:screenshot,fullPage:true}); result.screenshots.push(screenshot);
+    await page.screenshot({path:`${prefix}-${name}-viewport.png`});
     await page.emulateMedia({reducedMotion:'reduce'});
     check(`${name}: reduced motion`, await page.evaluate(()=>{
       const s=document.querySelector('#character-sprite');
@@ -71,6 +73,25 @@ try {
     }));
     await context.close();
   }
+  // Public reference observation only. Never included in the product website.
+  const reference = await browser.newPage({viewport:{width:1440,height:1000}});
+  try {
+    await reference.goto('https://comnyang.com/en', {waitUntil:'domcontentloaded'});
+    await reference.screenshot({path:`${prefix}-reference-comnyang-page.png`});
+    const videos=reference.locator('video');
+    const videoCount=await videos.count();
+    result.reference={url:'https://comnyang.com/en',videoCount,scope:'public promotional demo, not installed app behavior'};
+    for(const fragment of ['1-eye-follow','2-drag','3-type']) {
+      const video=reference.locator(`video[src*="${fragment}"]`).first();
+      if(!await video.count()) continue;
+      await video.scrollIntoViewIfNeeded();
+      await video.evaluate(async v=>{v.muted=true;v.load();await v.play().catch(()=>{});});
+      await video.waitFor({state:'visible'});
+      await reference.waitForTimeout(1200);
+      await video.screenshot({path:`${prefix}-reference-${fragment}.png`});
+    }
+  } catch(e) { result.reference={error:String(e),scope:'reference only, not a product test'}; }
+  await reference.close();
 } catch(e) { result.failed.push(String(e)); }
 finally {
   await browser?.close();
